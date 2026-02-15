@@ -1,17 +1,16 @@
 package com.moviebox
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.*
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.max
 
+// Data classes maison
 data class SearchResult(
     val name: String,
     val url: String,
@@ -48,7 +47,7 @@ class MovieBoxProvider {
     val name = "MovieBox"
 
     private fun base64Decode(encoded: String): ByteArray {
-        return java.util.Base64.getDecoder().decode(encoded)
+        return Base64.getDecoder().decode(encoded)
     }
 
     private val secretKeyDefault = base64Decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==")
@@ -68,23 +67,56 @@ class MovieBoxProvider {
         return "$timestamp,$hash"
     }
 
-    private fun buildCanonicalString(
+    private fun generateXTrSignature(
         method: String,
-        contentType: String,
-        accept: String,
+        accept: String?,
+        contentType: String?,
         url: String,
-        body: String
+        body: String? = null,
+        useAltKey: Boolean = false,
+        hardcodedTimestamp: Long? = null
     ): String {
-        val canonical = "$method\n$accept\n$contentType\n$url\n$body"
-        return canonical.trimEnd()
+        val timestamp = hardcodedTimestamp ?: System.currentTimeMillis()
+        val canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp)
+        val secret = if (useAltKey) secretKeyAlt else secretKeyDefault
+        val secretBytes = base64Decode(secret)
+
+        val mac = Mac.getInstance("HmacMD5")
+        mac.init(SecretKeySpec(secretBytes, "HmacMD5"))
+        val signature = mac.doFinal(canonical.toByteArray(Charsets.UTF_8))
+        val signatureB64 = Base64.getEncoder().encodeToString(signature)
+
+        return "$timestamp|2|$signatureB64"
     }
 
-    private fun generateXTrSignature(method: String, accept: String, contentType: String, url: String, body: String): String {
-        val canonical = buildCanonicalString(method, contentType, accept, url, body)
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(secretKeyDefault, "HmacSHA256"))
-        val hash = mac.doFinal(canonical.toByteArray())
-        return java.util.Base64.getEncoder().encodeToString(hash)
+    private fun buildCanonicalString(
+        method: String,
+        accept: String?,
+        contentType: String?,
+        url: String,
+        body: String?,
+        timestamp: Long
+    ): String {
+        val parsed = java.net.URI.create(url)
+        val path = parsed.path ?: ""
+        val query = if (parsed.query != null) "?${parsed.query}" else ""
+
+        val canonicalUrl = if (query.isNotEmpty()) "$path$query" else path
+
+        val bodyBytes = body?.toByteArray(Charsets.UTF_8)
+        val bodyHash = if (bodyBytes != null) {
+            val trimmed = if (bodyBytes.size > 102400) bodyBytes.copyOfRange(0, 102400) else bodyBytes
+            md5(trimmed)
+        } else ""
+
+        val bodyLength = bodyBytes?.size?.toString() ?: ""
+        return "${method.uppercase()}\n" +
+                "${accept ?: ""}\n" +
+                "${contentType ?: ""}\n" +
+                "$bodyLength\n" +
+                "$timestamp\n" +
+                "$bodyHash\n" +
+                canonicalUrl
     }
 
     suspend fun search(query: String): List<SearchResult> {
@@ -111,22 +143,33 @@ class MovieBoxProvider {
         val responseBody = response.body?.string() ?: return emptyList()
 
         val mapper = jacksonObjectMapper()
-        val root = mapper.readValue<JsonNode>(responseBody)
-        val items = root.at("/data/results")?.getElements() ?: return emptyList()
-
-        return buildList {
-            while (items.hasNext()) {
-                val subject = items.next()
-                val title = subject ?.asText() ?: continue
-                val id = subject ?.asText() ?: continue
-                val cover = subject ?.get("url")?.asText()
-                val type = when (subject ?.asInt()) {
+        val root = mapper.readTree(responseBody)
+        val results = root["data"]?.get("results") ?: return emptyList()
+        val searchList = mutableListOf<SearchResult>()
+        for (result in results) {
+            val subjects = result["subjects"] ?: continue
+            for (subject in subjects) {
+                val title = subject["title"]?.asText() ?: continue
+                val id = subject["subjectId"]?.asText() ?: continue
+                val coverImg = subject["cover"]?.get("url")?.asText()
+                val subjectType = subject["subjectType"]?.asInt() ?: 1
+                val type = when (subjectType) {
                     1 -> "movie"
                     2 -> "tv"
                     else -> "movie"
                 }
-                add(SearchResult(title, id, type, cover))
+                searchList.add(
+                    SearchResult(
+                        name = title,
+                        url = id,
+                        type = type,
+                        posterUrl = coverImg
+                    )
+                )
             }
         }
+        return searchList
     }
+
+    // Ajoute les autres fonctions (load, loadLinks) quand tu veux, en utilisant la même logique OkHttp
 }
