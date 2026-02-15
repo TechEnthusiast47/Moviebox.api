@@ -1,6 +1,5 @@
 package com.moviebox
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,11 +12,10 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.max
 
-// Data classes maison
 data class SearchResult(
     val name: String,
     val url: String,
-    val type: String,  // "movie" ou "tv"
+    val type: String,
     val posterUrl: String? = null,
     val score: Int? = null
 )
@@ -43,12 +41,15 @@ data class StreamLink(
     val headers: Map<String, String> = emptyMap()
 )
 
-// Client HTTP global
 val client = OkHttpClient()
 
 class MovieBoxProvider {
     val mainUrl = "https://api3.aoneroom.com"
     val name = "MovieBox"
+
+    private fun base64Decode(encoded: String): ByteArray {
+        return java.util.Base64.getDecoder().decode(encoded)
+    }
 
     private val secretKeyDefault = base64Decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==")
     private val secretKeyAlt = base64Decode("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==")
@@ -67,7 +68,24 @@ class MovieBoxProvider {
         return "$timestamp,$hash"
     }
 
-    // ... (le reste de tes fonctions buildCanonicalString, generateXTrSignature, etc. reste identique)
+    private fun buildCanonicalString(
+        method: String,
+        contentType: String,
+        accept: String,
+        url: String,
+        body: String
+    ): String {
+        val canonical = "$method\n$accept\n$contentType\n$url\n$body"
+        return canonical.trimEnd()
+    }
+
+    private fun generateXTrSignature(method: String, accept: String, contentType: String, url: String, body: String): String {
+        val canonical = buildCanonicalString(method, contentType, accept, url, body)
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secretKeyDefault, "HmacSHA256"))
+        val hash = mac.doFinal(canonical.toByteArray())
+        return java.util.Base64.getEncoder().encodeToString(hash)
+    }
 
     suspend fun search(query: String): List<SearchResult> {
         val url = "$mainUrl/wefeed-mobile-bff/subject-api/search/v2"
@@ -85,38 +103,30 @@ class MovieBoxProvider {
             "x-client-status" to "0"
         )
         val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
-        val request = Request.Builder().url(url).post(requestBody).headers(okhttp3.Headers.of(headers)).build()
+        val request = Request.Builder().url(url).post(requestBody).apply {
+            headers.forEach { (k, v) -> addHeader(k, v) }
+        }.build()
+
         val response = client.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        val responseBody = response.body?.string() ?: return emptyList()
+
         val mapper = jacksonObjectMapper()
-        val root = mapper.readTree(responseBody)
-        val results = root["data"]?.get("results") ?: return emptyList()
-        val searchList = mutableListOf<SearchResult>()
-        for (result in results) {
-            val subjects = result["subjects"] ?: continue
-            for (subject in subjects) {
-                val title = subject["title"]?.asText() ?: continue
-                val id = subject["subjectId"]?.asText() ?: continue
-                val coverImg = subject["cover"]?.get("url")?.asText()
-                val subjectType = subject["subjectType"]?.asInt() ?: 1
-                val type = when (subjectType) {
+        val root = mapper.readValue<JsonNode>(responseBody)
+        val items = root.at("/data/results")?.getElements() ?: return emptyList()
+
+        return buildList {
+            while (items.hasNext()) {
+                val subject = items.next()
+                val title = subject ?.asText() ?: continue
+                val id = subject ?.asText() ?: continue
+                val cover = subject ?.get("url")?.asText()
+                val type = when (subject ?.asInt()) {
                     1 -> "movie"
                     2 -> "tv"
                     else -> "movie"
                 }
-                searchList.add(
-                    SearchResult(
-                        name = title,
-                        url = id,
-                        type = type,
-                        posterUrl = coverImg
-                    )
-                )
+                add(SearchResult(title, id, type, cover))
             }
         }
-        return searchList
     }
-
-    // Ajoute les autres fonctions (load, loadLinks) de la même manière, en remplaçant app.get/app.post par OkHttp
-    // ...
 }
