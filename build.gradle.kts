@@ -17,7 +17,11 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Jackson + extension Kotlin (essentiel pour asText(), get(), etc.)
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
+
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 }
 
