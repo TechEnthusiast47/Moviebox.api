@@ -1,6 +1,5 @@
 package com.moviebox
 
-import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -8,6 +7,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 
@@ -29,23 +29,16 @@ fun main() {
 
         routing {
             get("/") {
-                call.respondText("MovieBox API is running ✅", ContentType.Text.Plain)
+                call.respondText("MovieBox API is running ✅")
             }
 
             get("/search") {
-                val query = call.parameters["query"] ?: return@get call.respond(
-                    ApiResponse<String>(false, null, "Missing query"),
-                    status = HttpStatusCode.BadRequest
-                )
-
+                val query = call.parameters["query"] ?: return@get call.respondText("Missing query", status = HttpStatusCode.BadRequest)
                 try {
                     val results = MovieBoxProvider().search(query)
                     call.respond(ApiResponse(true, results, null))
                 } catch (e: Exception) {
-                    call.respond(
-                        ApiResponse<String>(false, null, e.message ?: "Error"),
-                        status = HttpStatusCode.InternalServerError
-                    )
+                    call.respondText("Error: ${e.message}", status = HttpStatusCode.InternalServerError)
                 }
             }
         }
