@@ -1,7 +1,7 @@
 plugins {
     kotlin("jvm") version "1.9.24"
     id("io.ktor.plugin") version "2.3.12"
-    kotlin("plugin.serialization") version "1.9.24"  // ← c’est ça qui manquait ou était mal écrit
+    kotlin("plugin.serialization") version "1.9.24"   // ← obligatoire pour @Serializable
 }
 
 group = "com.moviebox"
@@ -12,14 +12,16 @@ repositories {
 }
 
 dependencies {
+    // Ktor de base
     implementation("io.ktor:ktor-server-core-jvm:2.3.12")
     implementation("io.ktor:ktor-server-netty-jvm:2.3.12")
     implementation("io.ktor:ktor-server-content-negotiation-jvm:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:2.3.12")
 
-    // La vraie dépendance pour @Serializable
+    // La vraie dépendance pour la sérialisation (version alignée avec Kotlin 1.9)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
+    // Le reste
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
